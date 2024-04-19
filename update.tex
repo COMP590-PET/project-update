@@ -5,60 +5,136 @@
 
 \begin{document}
 
-\title{Project Title Here}
+\title{Implementation of TapDance Protocol to Bypass Censorship}
 
 
-\author{\IEEEauthorblockN{Author 1}
+\author{\IEEEauthorblockN{Dohhyun Kim}
 \and
-\IEEEauthorblockN{Author 2}
+\IEEEauthorblockN{Harin Lim}
 \and
-\IEEEauthorblockN{Author 3}
+\IEEEauthorblockN{Jesse Wei}
+\and
+\IEEEauthorblockN{Daniel Xie}
+\and
+\IEEEauthorblockN{Matseoi Zau}
 }
 
 \maketitle
 
 \begin{abstract}
 
-A brief description of the project.
+Currently, common anti-censorship tools struggle to compete with censors' abilities to negate circumvention. TapDance, an approach to anti-censorship that utilizes end-to-middle proxying, overcomes this problem by applying a solution within the network itself. To show how users can bypass censorship with the help of internet service providers, we re-implement the TapDance protocol for refraction networking. By assessing the protocol's security through a series of attacks, we propose various improvements to enhance its robustness as an anti-censorship solution.
 
 \end{abstract}
 
-
 \section{Introduction}
 
-This document provides a template for the project update. The introduction should motivate and explain your project goals. The introduction should make clear to someone who reads the paper why this is a worthwhile project to work on and explain the real-world problems that the project will solve.
+Censorship is a powerful tool wielded by different governments and organizations across the world to limit the flow of and access to information. Anti-censorship tools provide essential ways to circumvent these restrictions and has the power to support human rights, promote transparency and accountability, and protect individuals from surveillance.
 
-It may be helpful to cite various sources throughout the project update and final paper. You can cite papers like this~\cite{item1}.
+Anti-censorship tools are often based on encrypted connections between clients and servers (for example, via a VPN). However, the weakness of many of these tools is that the censor can simply block the IP addresses of dependent servers. For censors, it is as difficult to find these IP addresses as it is for users. To circumvent this problem, TapDance uses an end-to-middle (E2M) proxying approach, which implements refraction networking.
+
+Refraction networking is a scheme for evading censorship technology with the help of internet service providers (ISPs). When an ISP is willing to assist TapDance users, the ISP is also called a TapDance station.
+
+In the TapDance protocol, the user first establishes a TLS handshake with a decoy server (an arbitrary unblocked website) and then exposes the session keys to the ISP. The user then hides a request to a blocked site in the header of a request to an unblocked site, which the censor interprets as legitimate. The ISP reads and decrypts the header information and then refracts the request to the original blocked site requested by the user.
+
+Our project goal is to re-implement the TapDance Protocol, simulate the censor and ISP locally, and analyze the security of the protocol by testing various attacks on it.
+
+Our code is available at \cite{TapDanceImpl}.
 
 \section{Solution Overview}
 
-This brief overview of your solution should give enough detail to convince the reader that you know exactly how you're going to solve the technical problems involved in your proposed project.
+In this project, we aim to simulate the TapDance protocol to see how we can bypass a firewall. In this protocol, the TapDance client connects to an arbitrary decoy server, performing a TLS handshake and creating a shared session key $K$. Then, the client sends an encrypted (under $K$) incomplete HTTP request to the decoy server. Because the request is incomplete, the decoy server will not send a response. Otherwise, the decoy server and E2M proxy would both send a response (that is, two responses for a single request), and this irregularity could be detected by the censor.
+
+The TapDance station extracts $K$ from this incomplete request, essentially creating a shared key between client and station. Then, the station sends a confirmation message to the client. Finally, the client sends an encrypted (under $K$) request for a blocked website, and the station decrypts (under $K$) this response to send the contents of the blocked website to the client, posing as the decoy server. This bypasses censorship in a way that cannot be detected by the censor.
+
+This protocol is illustrated in Figure 3 of \cite{tapdance}, reproduced below.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\linewidth]{img/tapdance_fig3.png}
+    \caption{TapDance protocol overview}
+    \label{tapdance_overview}
+\end{figure}
+
+% This brief overview of your solution should give enough detail to convince the reader that you know exactly how you're going to solve the technical problems involved in your proposed project.
+
+In our implementation, since we do not have an ISP partner, we simulate this protocol on a single machine by sending, intercepting, and modifying HTTP requests through a decoy server in Google Chrome.
 
 \section{Progress Update}
 
-Be sure to include the following in your update:
+\subsection{Elligator 2 on Curve25519}
+
+In TapDance, the client and station obtain a per-connection shared secret via elliptic-curve Diffie-Hellman (ECDH). In \ref{tapdance_overview}, the tag is the client's per-connection elliptic-curve public key point. However, points on known elliptic curves are easily distinguishable from uniform random bits. Thus, the censor could see the tag and detect that TapDance is being used. Thus, the authors choose to use Elligator 2 over Curve25519, which encodes elliptic-curve points such that they are indistinguishable from uniform random strings.
+
+Since Elligator 2 is not implemented in standard Python cryptographic libraries, we found \texttt{pymonocypher}, a Python binding to Monocypher, which includes a C implementation of Elligator 2 \cite{pymonocypher}.
+
+% A crucial component of this protocol is that the censor should not be able to tell that the incomplete part of the HTTP request (i.e. the tag) has any important information and should appear completely random in order to hide the fact that the client is trying to convey information, such as the session key, with the ISP/Tapdance. Therefore, the encryption scheme that the authors of the Tapdance paper opted to use was Elligator 2 on Curve25519 as Elligator 2 is specifically designed to map arbitrary data to elliptic curve points in a way that the outputs appear random and indistinguishable from non-curve-related data. This is different from what the cryptography library does in python. However, Python does not have a built in feature with most of its libraries to instantiate Elligator 2 on Curve25519. However, we found a tool/library named pymonocypher[] which simulates a C libary named monocypher, which incorporates Elligator 2, in python. This will be extremely useful as we can assume that the TapDance station and the client have their own public/private keypair produced by this scheme which they can exchange their public keys prior to the TLS Handshake in order to produce a shared secret key.  
+
+\subsection{HTTPS requests and responses}
+
+The TapDance protocol involves communication among a TapDance client, censor, TapDance station, and decoy server over HTTPS. To simulate such communication, we use the Python library \texttt{mitmproxy} \cite{mitmproxy}.
+
+\texttt{mitmproxy} binds to \texttt{localhost:8080} and has access to and control over all HTTP and HTTPS traffic that travels through that address. For example, it can intercept, modify, and replay requests.
+
+For example, in \ref{censor_sim}, our simulated firewall blocks access to Google (via \texttt{curl} in the terminal) by modifying the response to be a 404 (not found) but allows access to non-blocked websites, such as Overleaf. We are also able to refract requests by modifying the HTTP response's \texttt{host} field to a website to be redirected to.
+
+\begin{figure}[htp]
+    \centering
+    \includegraphics[width=8cm]{img/censor_example.png}
+    \caption{Simulated firewall}
+    \label{censor_sim}
+\end{figure}
+
+Since the TapDance protocol requires a TLS handshake, we have configured our computers (by generating a certificate for \texttt{mitmproxy} and modifying network settings) to allow \texttt{mitmproxy} to intercept HTTPS traffic correctly, using some advice given in \cite{mitmproxy_firewall}. This also allows Google Chrome to work properly with our code, allowing us to potentially demo our work in Google Chrome rather than only the command line.
+
+Although we simulate TapDance on only a single computer (as opposed to four to represent the four entities involved in the protocol), we believe this to be an accurate representation of how the protocol works in the real world. Specifically, in the real world, the censor intercepts all HTTP traffic from the client, and the ISP intercepts outgoing traffic from the censor. We capture this relationship in our simulation even though all traffic among the client, censor, and ISP goes through the same IP address.
+
+% To simulate censorship, we create our own using the python library mitmproxy. However, mitmproxy when initially used can only be applied when accessing HTTP requests which does not do the TLS Handshake as done in the TapDance protocol. To permit the ability of the firewall to block HTTPS requests (which will include the TLS Handshake) we needed to add the certificate of the mitmproxy (individually generated per machine). To do this, we setup an HTTP web proxy in our wireless connection to Server: 127.0.0.1 and Port: 8080 which allows us to connect to mitm.it, where we can then download the mitmproxy certificate. Next, we needed to trust the certificate within our own machine (for macOS, trusting the certificate must be made through Keychain Access) and then setup a secure HTTPS web proxy with the same server and port. Once this is applied, we can generate our own list of "banned" urls which we can then use as our mini-firewall in this scheme. 
+
+\subsection{Simulating TLS handshake}
+
+A call to Python's \texttt{requests.get} automatically causes a TLS handshake to be performed between the client and server. However, we need to access the shared session key of the TLS handshake, so we believe the high-level library \texttt{requests} is not sufficient, and we instead need the lower-level library \texttt{sockets} (and possibly some other lower-level libraries). We have written some code to this end.
+
+After we complete the TLS handshake and retrieve the keys, we may also need the program to use our \texttt{mitmproxy} certificate.
+
+% Simulating the TLS handshake through Python requires a lower leve as the requests library simply does not allow alterations to the TLS Handshake, at least not in a simple manner. But using the libraries os, socket and sll, we can simulate the TLS Handshake with edit abilities to the requests as well as access to the SSL keys, which is required to give to the TapDance station through the tag to allow the TapDance station to decrypt the https requests. The TLS handshake creates a socket which is connected to our localhost and the proxy port 8080. After the initial handshake is completed and all the necessary keys are generated, we also need to make sure this program accepts the same certificate as the mitmproxy in order for any https request to go through the firewall by adding it locally and adding the certificate as SSL Context around the socket. 
+
+\subsection{Future work}
+
+We currently have the simulated client and firewall. We have a simulated ISP that can refract HTTP(S) requests, but it does not yet implement the TapDance protocol. 
+
+We still need to implement the cryptographic components of the TapDance protocol, such as extracting the TLS handshake session key, sending an incomplete HTTP request with a tag, and working with Elligator2 over Curve25519. 
+
+%We currently have a temporary ISP, which can return a website even on the blocked list to bypass, but we aim to simulate the exact TLS handshake protocol between the client and server such that the TapDance station can redirect an incomplete request towards a different website. 
+
+We may potentially use \texttt{rameses.cs.unc.edu} as the ISP to make the simulation more realistic (that is, not all four TapDance protocol entities use the same IP address), but it may not be necessary.
+
+Finally, we need to test attacks on the protocol to evaluate its security.
+
+\section{Acknowledgements}
 \begin{itemize}
-\item What has been accomplished so far.
-
-\item What each team member has done.
-
-\item A GitHub (or other source code repository) link to your project code.
+    \item Daniel worked on setting up \texttt{mitmproxy}, TLS handshake/client code, cryptographic code, and the project update.
+    \item Jesse worked on setting up \texttt{mitmproxy}, \texttt{mitmproxy}-related code (client, censor, ISP), and the project update.
+    \item Matseoi, Dohhyun, and Harin prioritized research on the paper and applications and writing up the proposal update. 
 \end{itemize}
 
-Remember that your project update should be 2-3 pages long, excluding references and appendices.
+\printbibliography
 
-You can also use this template for your final report, but remember that there will be additional sections that you need to add for that part.
+% \begin{thebibliography}{9}
 
-\begin{thebibliography}{9}
+% \bibitem{item1}
+% Author name. "Title of Paper." Publication venue, year.
 
-\bibitem{item1}
-Author name. "Title of Paper." Publication venue, year.
+% \bibitem{item1}
+% Author name. "Title of Paper." Publication venue, year.
 
-\end{thebibliography}
+% \bibitem{item1}
+% Author name. "Title of Paper." Publication venue, year.
+% \end{thebibliography}
 
-\appendices
-\section{Supplementary content}
+% \appendices
+% \section{Supplementary content}
 
-\todo{Delete this section if there isn't any supplementary material}
+% \todo{Delete this section if there isn't any supplementary material}
 
 \end{document}
